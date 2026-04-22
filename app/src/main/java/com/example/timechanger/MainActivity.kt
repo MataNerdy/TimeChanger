@@ -1,140 +1,198 @@
 package com.example.timechanger
 
-import android.app.TimePickerDialog
+import android.content.Context
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
 import android.widget.Button
-import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.LocalTime
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var fromCityInput: AutoCompleteTextView
-    private lateinit var toCityInput: AutoCompleteTextView
-    private lateinit var pickTimeButton: Button
-    private lateinit var convertButton: Button
-    private lateinit var selectedTimeText: TextView
-    private lateinit var resultText: TextView
+    private lateinit var cityInput: AutoCompleteTextView
+    private lateinit var addClockButton: Button
+    private lateinit var clocksRecyclerView: RecyclerView
+    private lateinit var clockAdapter: ClockAdapter
 
-    private var selectedHour: Int = 12
-    private var selectedMinute: Int = 0
+    private val selectedZones = mutableListOf<String>()
 
-    private val cityToZone = mapOf(
-        "Tbilisi" to "Asia/Tbilisi",
-        "Moscow" to "Europe/Moscow",
-        "London" to "Europe/London",
-        "Paris" to "Europe/Paris",
-        "Berlin" to "Europe/Berlin",
-        "Rome" to "Europe/Rome",
-        "Madrid" to "Europe/Madrid",
-        "New York" to "America/New_York",
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val ticker = object : Runnable {
+        override fun run() {
+            clockAdapter.refreshTimes()
+            uiHandler.postDelayed(this, 1000)
+        }
+    }
+
+    private lateinit var zoneSuggestions: List<String>
+
+    // Простые алиасы для популярных городов, которые не совпадают с IANA ID
+    private val cityAliases = mapOf(
+        "Seattle" to "America/Los_Angeles",
+        "San Francisco" to "America/Los_Angeles",
         "Los Angeles" to "America/Los_Angeles",
-        "Chicago" to "America/Chicago",
-        "Tokyo" to "Asia/Tokyo",
-        "Seoul" to "Asia/Seoul",
-        "Dubai" to "Asia/Dubai",
+        "Vancouver" to "America/Vancouver",
+        "New York City" to "America/New_York",
+        "Washington" to "America/New_York",
         "Beijing" to "Asia/Shanghai",
-        "Delhi" to "Asia/Kolkata",
-        "Sydney" to "Australia/Sydney"
+        "Kyiv" to "Europe/Kyiv",
+        "Kiev" to "Europe/Kyiv"
     )
 
-    private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+    companion object {
+        private const val PREFS_NAME = "world_clock_prefs"
+        private const val KEY_SELECTED_ZONES = "selected_zones"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        fromCityInput = findViewById(R.id.fromCityInput)
-        toCityInput = findViewById(R.id.toCityInput)
-        pickTimeButton = findViewById(R.id.pickTimeButton)
-        convertButton = findViewById(R.id.convertButton)
-        selectedTimeText = findViewById(R.id.selectedTimeText)
-        resultText = findViewById(R.id.resultText)
+        cityInput = findViewById(R.id.cityInput)
+        addClockButton = findViewById(R.id.addClockButton)
+        clocksRecyclerView = findViewById(R.id.clocksRecyclerView)
 
-        setupCityDropdowns()
-        updateSelectedTimeLabel()
+        zoneSuggestions = ZoneId.getAvailableZoneIds()
+            .toList()
+            .sorted()
 
-        fromCityInput.setText("Tbilisi", false)
-        toCityInput.setText("London", false)
+        setupAutocomplete()
+        setupRecyclerView()
 
-        pickTimeButton.setOnClickListener {
-            showTimePicker()
+        loadSavedZones()
+
+        if (selectedZones.isEmpty()) {
+            addZoneIfNeeded("Asia/Tbilisi", save = false)
+            addZoneIfNeeded("Europe/London", save = false)
+            addZoneIfNeeded("America/New_York", save = false)
+            addZoneIfNeeded("Asia/Tokyo", save = false)
+            saveZones()
         }
 
-        convertButton.setOnClickListener {
-            convertTime()
+        addClockButton.setOnClickListener {
+            addClockFromInput()
         }
     }
 
-    private fun setupCityDropdowns() {
-        val cities = cityToZone.keys.toList()
-        val adapter = ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, cities)
-
-        fromCityInput.setAdapter(adapter)
-        toCityInput.setAdapter(adapter)
+    override fun onStart() {
+        super.onStart()
+        uiHandler.post(ticker)
     }
 
-    private fun updateSelectedTimeLabel() {
-        val time = LocalTime.of(selectedHour, selectedMinute)
-        selectedTimeText.text = "Selected time: ${time.format(timeFormatter)}"
+    override fun onStop() {
+        super.onStop()
+        uiHandler.removeCallbacks(ticker)
     }
 
-    private fun showTimePicker() {
-        val dialog = TimePickerDialog(
+    private fun setupAutocomplete() {
+        val suggestionItems = (zoneSuggestions + cityAliases.keys)
+            .distinct()
+            .sorted()
+
+        val adapter = ArrayAdapter(
             this,
-            { _, hourOfDay, minute ->
-                selectedHour = hourOfDay
-                selectedMinute = minute
-                updateSelectedTimeLabel()
-            },
-            selectedHour,
-            selectedMinute,
-            true
+            android.R.layout.simple_dropdown_item_1line,
+            suggestionItems
         )
-        dialog.show()
+        cityInput.setAdapter(adapter)
     }
 
-    private fun convertTime() {
-        val fromCity = fromCityInput.text.toString().trim()
-        val toCity = toCityInput.text.toString().trim()
+    private fun setupRecyclerView() {
+        clockAdapter = ClockAdapter(selectedZones) { zoneId ->
+            selectedZones.remove(zoneId)
+            clockAdapter.notifyDataSetChanged()
+            saveZones()
+        }
 
-        if (fromCity !in cityToZone.keys) {
-            Toast.makeText(this, "Choose a valid source city", Toast.LENGTH_SHORT).show()
+        clocksRecyclerView.layoutManager = LinearLayoutManager(this)
+        clocksRecyclerView.adapter = clockAdapter
+    }
+
+    private fun addClockFromInput() {
+        val rawInput = cityInput.text.toString().trim()
+
+        if (rawInput.isEmpty()) {
+            Toast.makeText(this, "Enter a city or timezone", Toast.LENGTH_SHORT).show()
             return
         }
 
-        if (toCity !in cityToZone.keys) {
-            Toast.makeText(this, "Choose a valid target city", Toast.LENGTH_SHORT).show()
+        val normalized = findMatchingZone(rawInput)
+        if (normalized == null) {
+            Toast.makeText(this, "City/timezone not found", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val fromZone = ZoneId.of(cityToZone[fromCity]!!)
-        val toZone = ZoneId.of(cityToZone[toCity]!!)
+        addZoneIfNeeded(normalized, save = true)
+        cityInput.setText("")
+    }
 
-        val sourceDate = LocalDate.now(fromZone)
-        val sourceTime = LocalTime.of(selectedHour, selectedMinute)
-        val sourceDateTime = LocalDateTime.of(sourceDate, sourceTime)
-
-        val zonedSource = sourceDateTime.atZone(fromZone)
-        val zonedTarget = zonedSource.withZoneSameInstant(toZone)
-
-        val convertedTime = zonedTarget.toLocalTime().format(timeFormatter)
-        val convertedDate = zonedTarget.toLocalDate()
-
-        resultText.text = buildString {
-            append("${sourceTime.format(timeFormatter)} in $fromCity\n")
-            append("= $convertedTime in $toCity")
-
-            if (convertedDate != sourceDate) {
-                append("\nDate changes to: $convertedDate")
-            }
+    private fun addZoneIfNeeded(zoneId: String, save: Boolean = true) {
+        if (selectedZones.contains(zoneId)) {
+            Toast.makeText(this, "This clock is already added", Toast.LENGTH_SHORT).show()
+            return
         }
+
+        selectedZones.add(zoneId)
+        selectedZones.sort()
+        clockAdapter.notifyDataSetChanged()
+
+        if (save) {
+            saveZones()
+        }
+    }
+
+    private fun findMatchingZone(input: String): String? {
+        // 1) точный алиас
+        cityAliases.entries.firstOrNull { it.key.equals(input, ignoreCase = true) }?.let {
+            return it.value
+        }
+
+        // 2) точное совпадение по IANA ID
+        zoneSuggestions.firstOrNull { it.equals(input, ignoreCase = true) }?.let {
+            return it
+        }
+
+        // 3) совпадение по "человеческому" имени из конца ID
+        zoneSuggestions.firstOrNull {
+            it.substringAfterLast("/")
+                .replace("_", " ")
+                .equals(input, ignoreCase = true)
+        }?.let {
+            return it
+        }
+
+        // 4) частичное совпадение по алиасам
+        cityAliases.entries.firstOrNull { it.key.contains(input, ignoreCase = true) }?.let {
+            return it.value
+        }
+
+        // 5) частичное совпадение по IANA ID и красивому названию
+        return zoneSuggestions.firstOrNull {
+            it.contains(input, ignoreCase = true) ||
+                    it.substringAfterLast("/")
+                        .replace("_", " ")
+                        .contains(input, ignoreCase = true)
+        }
+    }
+
+    private fun saveZones() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putStringSet(KEY_SELECTED_ZONES, selectedZones.toSet())
+            .apply()
+    }
+
+    private fun loadSavedZones() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val saved = prefs.getStringSet(KEY_SELECTED_ZONES, emptySet()) ?: emptySet()
+
+        selectedZones.clear()
+        selectedZones.addAll(saved.sorted())
     }
 }
