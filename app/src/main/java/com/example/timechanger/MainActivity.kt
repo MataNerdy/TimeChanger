@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
@@ -17,7 +19,12 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 class MainActivity : AppCompatActivity() {
 
@@ -32,8 +39,10 @@ class MainActivity : AppCompatActivity() {
     private val selectedClocks = mutableListOf<ClockItem>()
 
     private val homeZoneId = "Asia/Tbilisi"
-
     private lateinit var zoneSuggestions: List<String>
+
+    private val timeInputFormatter = DateTimeFormatter.ofPattern("H:mm")
+    private val timeOutputFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
     private val cityAliases = mapOf(
         "Seattle" to "America/Los_Angeles",
@@ -128,6 +137,9 @@ class MainActivity : AppCompatActivity() {
             },
             onEdit = { item ->
                 showEditDialog(item)
+            },
+            onConvert = { item ->
+                showConvertDialog(item)
             }
         )
 
@@ -255,6 +267,107 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun describeRelativeDay(baseDate: LocalDate, otherDate: LocalDate): String {
+        return when {
+            otherDate.isEqual(baseDate) -> "Today"
+            otherDate.isEqual(baseDate.minusDays(1)) -> "Yesterday"
+            otherDate.isEqual(baseDate.plusDays(1)) -> "Tomorrow"
+            otherDate.isBefore(baseDate) -> "${java.time.temporal.ChronoUnit.DAYS.between(otherDate, baseDate)} days earlier"
+            else -> "${java.time.temporal.ChronoUnit.DAYS.between(baseDate, otherDate)} days later"
+        }
+    }
+
+    private fun showConvertDialog(item: ClockItem) {
+        val dialogView = LayoutInflater.from(this)
+            .inflate(R.layout.dialog_convert_time, null)
+
+        val homeLabelText = dialogView.findViewById<TextView>(R.id.homeLabelText)
+        val targetLabelText = dialogView.findViewById<TextView>(R.id.targetLabelText)
+        val homeTimeInput = dialogView.findViewById<EditText>(R.id.homeTimeInput)
+        val targetTimeInput = dialogView.findViewById<EditText>(R.id.targetTimeInput)
+        val homeDayInfoText = dialogView.findViewById<TextView>(R.id.homeDayInfoText)
+        val targetDayInfoText = dialogView.findViewById<TextView>(R.id.targetDayInfoText)
+
+        homeLabelText.text = "Tbilisi time"
+        targetLabelText.text = "${item.name} time"
+
+        var isProgrammaticUpdate = false
+
+        val homeZone = ZoneId.of(homeZoneId)
+        val targetZone = getTargetZoneForClock(item)
+
+        fun convertHomeToTarget(text: String) {
+            if (isProgrammaticUpdate) return
+            if (text.isBlank()) return
+
+            try {
+                val homeTime = LocalTime.parse(text, timeInputFormatter)
+                val homeDate = LocalDate.now(homeZone)
+                val homeDateTime = ZonedDateTime.of(homeDate, homeTime, homeZone)
+                val targetDateTime = homeDateTime.withZoneSameInstant(targetZone)
+
+                isProgrammaticUpdate = true
+                targetTimeInput.setText(targetDateTime.format(timeOutputFormatter))
+                homeDayInfoText.text = "Today"
+                targetDayInfoText.text = describeRelativeDay(homeDate, targetDateTime.toLocalDate())
+                isProgrammaticUpdate = false
+            } catch (_: Exception) {
+            }
+        }
+
+        fun convertTargetToHome(text: String) {
+            if (isProgrammaticUpdate) return
+            if (text.isBlank()) return
+
+            try {
+                val targetTime = LocalTime.parse(text, timeInputFormatter)
+                val targetDate = LocalDate.now(targetZone)
+                val targetDateTime = ZonedDateTime.of(targetDate, targetTime, targetZone)
+                val homeDateTime = targetDateTime.withZoneSameInstant(homeZone)
+
+                isProgrammaticUpdate = true
+                homeTimeInput.setText(homeDateTime.format(timeOutputFormatter))
+                targetDayInfoText.text = "Today"
+                homeDayInfoText.text = describeRelativeDay(targetDate, homeDateTime.toLocalDate())
+                isProgrammaticUpdate = false
+            } catch (_: Exception) {
+            }
+        }
+
+        homeTimeInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                convertHomeToTarget(s?.toString().orEmpty())
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        targetTimeInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                convertTargetToHome(s?.toString().orEmpty())
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        AlertDialog.Builder(this)
+            .setTitle("Convert time: ${item.name}")
+            .setView(dialogView)
+            .setPositiveButton("Close", null)
+            .show()
+    }
+
+    private fun getTargetZoneForClock(item: ClockItem): ZoneId {
+        if (item.zoneId != null) {
+            return ZoneId.of(item.zoneId)
+        }
+
+        val homeNow = ZonedDateTime.now(ZoneId.of(homeZoneId))
+        val totalSeconds = homeNow.offset.totalSeconds + (item.offsetHours ?: 0) * 3600
+        val zoneOffset = ZoneOffset.ofTotalSeconds(totalSeconds)
+        return zoneOffset
     }
 
     private fun findMatchingZone(input: String): String? {

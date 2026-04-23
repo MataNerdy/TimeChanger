@@ -14,7 +14,8 @@ class ClockAdapter(
     private val items: MutableList<ClockItem>,
     private val homeZoneId: String,
     private val onRemove: (ClockItem) -> Unit,
-    private val onEdit: (ClockItem) -> Unit
+    private val onEdit: (ClockItem) -> Unit,
+    private val onConvert: (ClockItem) -> Unit
 ) : RecyclerView.Adapter<ClockAdapter.ClockViewHolder>() {
 
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -26,6 +27,7 @@ class ClockAdapter(
         val dateText: TextView = itemView.findViewById(R.id.dateText)
         val zoneText: TextView = itemView.findViewById(R.id.zoneText)
         val modeText: TextView = itemView.findViewById(R.id.modeText)
+        val convertButton: Button = itemView.findViewById(R.id.convertButton)
         val editButton: Button = itemView.findViewById(R.id.editButton)
         val removeButton: Button = itemView.findViewById(R.id.removeButton)
     }
@@ -58,6 +60,10 @@ class ClockAdapter(
             val offset = item.offsetHours ?: 0
             val sign = if (offset >= 0) "+" else ""
             holder.modeText.text = "Manual offset: ${sign}${offset}h"
+        }
+
+        holder.convertButton.setOnClickListener {
+            onConvert(item)
         }
 
         holder.editButton.setOnClickListener {
