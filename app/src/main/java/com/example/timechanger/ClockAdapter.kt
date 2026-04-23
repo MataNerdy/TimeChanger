@@ -6,12 +6,15 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
 class ClockAdapter(
-    private val items: MutableList<String>,
-    private val onRemove: (String) -> Unit
+    private val items: MutableList<ClockItem>,
+    private val homeZoneId: String,
+    private val onRemove: (ClockItem) -> Unit,
+    private val onEdit: (ClockItem) -> Unit
 ) : RecyclerView.Adapter<ClockAdapter.ClockViewHolder>() {
 
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -22,6 +25,8 @@ class ClockAdapter(
         val timeText: TextView = itemView.findViewById(R.id.timeText)
         val dateText: TextView = itemView.findViewById(R.id.dateText)
         val zoneText: TextView = itemView.findViewById(R.id.zoneText)
+        val modeText: TextView = itemView.findViewById(R.id.modeText)
+        val editButton: Button = itemView.findViewById(R.id.editButton)
         val removeButton: Button = itemView.findViewById(R.id.removeButton)
     }
 
@@ -32,16 +37,35 @@ class ClockAdapter(
     }
 
     override fun onBindViewHolder(holder: ClockViewHolder, position: Int) {
-        val zoneId = items[position]
-        val now = ZonedDateTime.now(java.time.ZoneId.of(zoneId))
+        val item = items[position]
 
-        holder.cityNameText.text = prettifyZoneName(zoneId)
+        val now = if (item.zoneId != null) {
+            ZonedDateTime.now(ZoneId.of(item.zoneId))
+        } else {
+            val homeNow = ZonedDateTime.now(ZoneId.of(homeZoneId))
+            homeNow.plusHours((item.offsetHours ?: 0).toLong())
+        }
+
+        holder.cityNameText.text = item.name
         holder.timeText.text = now.format(timeFormatter)
         holder.dateText.text = now.format(dateFormatter)
-        holder.zoneText.text = zoneId
+
+        if (item.zoneId != null) {
+            holder.zoneText.text = item.zoneId
+            holder.modeText.text = "Timezone mode"
+        } else {
+            holder.zoneText.text = "From home zone: $homeZoneId"
+            val offset = item.offsetHours ?: 0
+            val sign = if (offset >= 0) "+" else ""
+            holder.modeText.text = "Manual offset: ${sign}${offset}h"
+        }
+
+        holder.editButton.setOnClickListener {
+            onEdit(item)
+        }
 
         holder.removeButton.setOnClickListener {
-            onRemove(zoneId)
+            onRemove(item)
         }
     }
 
@@ -49,9 +73,5 @@ class ClockAdapter(
 
     fun refreshTimes() {
         notifyDataSetChanged()
-    }
-
-    private fun prettifyZoneName(zoneId: String): String {
-        return zoneId.substringAfterLast("/").replace("_", " ")
     }
 }
