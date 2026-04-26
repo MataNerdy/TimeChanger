@@ -29,10 +29,7 @@ import java.time.format.DateTimeFormatter
 class MainActivity : AppCompatActivity() {
 
     private lateinit var homeZoneText: TextView
-    private lateinit var nameInput: EditText
-    private lateinit var offsetInput: EditText
-    private lateinit var timezoneInput: AutoCompleteTextView
-    private lateinit var addClockButton: Button
+    private lateinit var showAddClockButton: Button
     private lateinit var clocksRecyclerView: RecyclerView
     private lateinit var clockAdapter: ClockAdapter
 
@@ -74,10 +71,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         homeZoneText = findViewById(R.id.homeZoneText)
-        nameInput = findViewById(R.id.nameInput)
-        offsetInput = findViewById(R.id.offsetInput)
-        timezoneInput = findViewById(R.id.timezoneInput)
-        addClockButton = findViewById(R.id.addClockButton)
+        showAddClockButton = findViewById(R.id.showAddClockButton)
         clocksRecyclerView = findViewById(R.id.clocksRecyclerView)
 
         homeZoneText.text = "Home zone: $homeZoneId"
@@ -86,7 +80,6 @@ class MainActivity : AppCompatActivity() {
             .toList()
             .sorted()
 
-        setupAutocomplete()
         setupRecyclerView()
         loadClocks()
 
@@ -98,8 +91,8 @@ class MainActivity : AppCompatActivity() {
             clockAdapter.notifyDataSetChanged()
         }
 
-        addClockButton.setOnClickListener {
-            addClockFromInput()
+        showAddClockButton.setOnClickListener {
+            showAddClockDialog()
         }
     }
 
@@ -113,18 +106,6 @@ class MainActivity : AppCompatActivity() {
         uiHandler.removeCallbacks(ticker)
     }
 
-    private fun setupAutocomplete() {
-        val suggestionItems = (zoneSuggestions + cityAliases.keys)
-            .distinct()
-            .sorted()
-
-        val adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_dropdown_item_1line,
-            suggestionItems
-        )
-        timezoneInput.setAdapter(adapter)
-    }
 
     private fun setupRecyclerView() {
         clockAdapter = ClockAdapter(
@@ -147,52 +128,73 @@ class MainActivity : AppCompatActivity() {
         clocksRecyclerView.adapter = clockAdapter
     }
 
-    private fun addClockFromInput() {
-        val name = nameInput.text.toString().trim()
-        val offsetText = offsetInput.text.toString().trim()
-        val timezoneRaw = timezoneInput.text.toString().trim()
+    private fun showAddClockDialog() {
+        val dialogView = LayoutInflater.from(this)
+            .inflate(R.layout.dialog_add_clock, null)
 
-        if (name.isEmpty()) {
-            Toast.makeText(this, "Enter clock name", Toast.LENGTH_SHORT).show()
-            return
-        }
+        val addNameInput = dialogView.findViewById<EditText>(R.id.addNameInput)
+        val addOffsetInput = dialogView.findViewById<EditText>(R.id.addOffsetInput)
+        val addTimezoneInput = dialogView.findViewById<AutoCompleteTextView>(R.id.addTimezoneInput)
 
-        val zoneId = if (timezoneRaw.isNotEmpty()) {
-            findMatchingZone(timezoneRaw)
-        } else {
-            null
-        }
+        val suggestionItems = (zoneSuggestions + cityAliases.keys)
+            .distinct()
+            .sorted()
 
-        if (timezoneRaw.isNotEmpty() && zoneId == null) {
-            Toast.makeText(this, "Timezone not found", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val offset = if (offsetText.isNotEmpty()) {
-            offsetText.toIntOrNull()
-        } else {
-            null
-        }
-
-        if (zoneId == null && offset == null) {
-            Toast.makeText(this, "Set either offset or timezone", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val item = ClockItem(
-            name = name,
-            offsetHours = offset,
-            zoneId = zoneId
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_dropdown_item_1line,
+            suggestionItems
         )
+        addTimezoneInput.setAdapter(adapter)
 
-        selectedClocks.add(item)
-        selectedClocks.sortBy { it.name.lowercase() }
-        clockAdapter.notifyDataSetChanged()
-        saveClocks()
+        AlertDialog.Builder(this)
+            .setTitle("Add clock")
+            .setView(dialogView)
+            .setPositiveButton("Add") { _, _ ->
+                val name = addNameInput.text.toString().trim()
+                val offsetText = addOffsetInput.text.toString().trim()
+                val timezoneRaw = addTimezoneInput.text.toString().trim()
 
-        nameInput.setText("")
-        offsetInput.setText("")
-        timezoneInput.setText("")
+                if (name.isEmpty()) {
+                    Toast.makeText(this, "Enter clock name", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+
+                val zoneId = if (timezoneRaw.isNotEmpty()) {
+                    findMatchingZone(timezoneRaw)
+                } else {
+                    null
+                }
+
+                if (timezoneRaw.isNotEmpty() && zoneId == null) {
+                    Toast.makeText(this, "Timezone not found", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+
+                val offset = if (offsetText.isNotEmpty()) {
+                    offsetText.toIntOrNull()
+                } else {
+                    null
+                }
+
+                if (zoneId == null && offset == null) {
+                    Toast.makeText(this, "Set either offset or timezone", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+
+                val item = ClockItem(
+                    name = name,
+                    offsetHours = offset,
+                    zoneId = zoneId
+                )
+
+                selectedClocks.add(item)
+                selectedClocks.sortBy { it.name.lowercase() }
+                clockAdapter.notifyDataSetChanged()
+                saveClocks()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun showEditDialog(item: ClockItem) {
@@ -351,6 +353,11 @@ class MainActivity : AppCompatActivity() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
+
+        val nowHome = ZonedDateTime.now(homeZone)
+        val nowHomeText = nowHome.format(timeOutputFormatter)
+        homeTimeInput.setText(nowHomeText)
+        convertHomeToTarget(nowHomeText)
 
         AlertDialog.Builder(this)
             .setTitle("Convert time: ${item.name}")
