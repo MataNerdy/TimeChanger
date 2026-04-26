@@ -13,13 +13,13 @@
             android:id="@+id/addNameInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Clock name, e.g. Seattle" />
+            android:hint="Clock name" />
 
         <EditText
             android:id="@+id/addOffsetInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Offset from home, e.g. -11"
+            android:hint="Offset from home"
             android:inputType="numberSigned"
             android:layout_marginTop="12dp" />
 
@@ -27,7 +27,7 @@
             android:id="@+id/addTimezoneInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Optional timezone, e.g. America/Los_Angeles"
+            android:hint="Timezone"
             android:padding="12dp"
             android:background="@android:drawable/edit_text"
             android:layout_marginTop="12dp" />
