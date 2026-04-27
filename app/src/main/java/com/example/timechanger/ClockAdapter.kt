@@ -12,7 +12,7 @@ import java.time.format.DateTimeFormatter
 
 class ClockAdapter(
     private val items: MutableList<ClockItem>,
-    private val homeZoneId: String,
+    private var homeZoneId: String,
     private val onRemove: (ClockItem) -> Unit,
     private val onEdit: (ClockItem) -> Unit,
     private val onConvert: (ClockItem) -> Unit
@@ -79,5 +79,9 @@ class ClockAdapter(
 
     fun refreshTimes() {
         notifyDataSetChanged()
+    }
+
+    fun updateHomeZone(newZone: String) {
+        homeZoneId = newZone
     }
 }

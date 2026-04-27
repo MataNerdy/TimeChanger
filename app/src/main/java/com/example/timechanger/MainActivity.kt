@@ -35,11 +35,31 @@ class MainActivity : AppCompatActivity() {
 
     private val selectedClocks = mutableListOf<ClockItem>()
 
-    private val homeZoneId = "Asia/Tbilisi"
+    private var homeZoneId = "Asia/Tbilisi"
     private lateinit var zoneSuggestions: List<String>
 
     private val timeInputFormatter = DateTimeFormatter.ofPattern("H:mm")
     private val timeOutputFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+    private val popularZones = listOf(
+        "Asia/Tbilisi",
+        "Europe/Moscow",
+        "Europe/London",
+        "Europe/Berlin",
+        "Europe/Paris",
+        "Europe/Rome",
+        "Europe/Madrid",
+        "America/New_York",
+        "America/Chicago",
+        "America/Los_Angeles",
+        "America/Vancouver",
+        "Asia/Dubai",
+        "Asia/Tokyo",
+        "Asia/Seoul",
+        "Asia/Shanghai",
+        "Asia/Kolkata",
+        "Australia/Sydney"
+    )
 
     private val cityAliases = mapOf(
         "Seattle" to "America/Los_Angeles",
@@ -64,18 +84,22 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "world_clock_prefs"
         private const val KEY_CLOCKS_JSON = "clocks_json"
+
+        private const val KEY_HOME_ZONE_ID = "home_zone_id"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
+        loadHomeZone()
         homeZoneText = findViewById(R.id.homeZoneText)
         showAddClockButton = findViewById(R.id.showAddClockButton)
         clocksRecyclerView = findViewById(R.id.clocksRecyclerView)
 
         homeZoneText.text = "Home zone: $homeZoneId"
-
+        homeZoneText.setOnClickListener {
+            showHomeZonePicker()
+        }
         zoneSuggestions = ZoneId.getAvailableZoneIds()
             .toList()
             .sorted()
@@ -88,6 +112,7 @@ class MainActivity : AppCompatActivity() {
             selectedClocks.add(ClockItem(name = "London", zoneId = "Europe/London"))
             selectedClocks.add(ClockItem(name = "Seattle", offsetHours = -11))
             saveClocks()
+            clockAdapter.updateHomeZone(homeZoneId)
             clockAdapter.notifyDataSetChanged()
         }
 
@@ -106,7 +131,36 @@ class MainActivity : AppCompatActivity() {
         uiHandler.removeCallbacks(ticker)
     }
 
+    private fun saveHomeZone() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(KEY_HOME_ZONE_ID, homeZoneId)
+            .apply()
+    }
 
+    private fun loadHomeZone() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        homeZoneId = prefs.getString(KEY_HOME_ZONE_ID, "Asia/Tbilisi") ?: "Asia/Tbilisi"
+    }
+
+    private fun showHomeZonePicker() {
+        val zones = popularZones.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Select home timezone")
+            .setItems(zones) { _, which ->
+                val selected = zones[which]
+
+                homeZoneId = selected
+                homeZoneText.text = "Home zone: $homeZoneId"
+
+                saveHomeZone()
+
+                // обновляем часы
+                clockAdapter.notifyDataSetChanged()
+            }
+            .show()
+    }
     private fun setupRecyclerView() {
         clockAdapter = ClockAdapter(
             items = selectedClocks,
@@ -136,7 +190,7 @@ class MainActivity : AppCompatActivity() {
         val addOffsetInput = dialogView.findViewById<EditText>(R.id.addOffsetInput)
         val addTimezoneInput = dialogView.findViewById<AutoCompleteTextView>(R.id.addTimezoneInput)
 
-        val suggestionItems = (zoneSuggestions + cityAliases.keys)
+        val suggestionItems = (popularZones + cityAliases.keys)
             .distinct()
             .sorted()
 
@@ -146,6 +200,17 @@ class MainActivity : AppCompatActivity() {
             suggestionItems
         )
         addTimezoneInput.setAdapter(adapter)
+        addTimezoneInput.threshold = 0
+
+        addTimezoneInput.setOnClickListener {
+            addTimezoneInput.showDropDown()
+        }
+
+        addTimezoneInput.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                addTimezoneInput.showDropDown()
+            }
+        }
 
         AlertDialog.Builder(this)
             .setTitle("Add clock")
@@ -209,7 +274,7 @@ class MainActivity : AppCompatActivity() {
         editOffsetInput.setText(item.offsetHours?.toString() ?: "")
         editTimezoneInput.setText(item.zoneId ?: "", false)
 
-        val suggestionItems = (zoneSuggestions + cityAliases.keys)
+        val suggestionItems = (popularZones + cityAliases.keys)
             .distinct()
             .sorted()
 
@@ -219,6 +284,17 @@ class MainActivity : AppCompatActivity() {
             suggestionItems
         )
         editTimezoneInput.setAdapter(adapter)
+        editTimezoneInput.threshold = 0
+
+        editTimezoneInput.setOnClickListener {
+            editTimezoneInput.showDropDown()
+        }
+
+        editTimezoneInput.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                editTimezoneInput.showDropDown()
+            }
+        }
 
         AlertDialog.Builder(this)
             .setTitle("Edit clock")
@@ -281,6 +357,61 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun normalizeTimeInput(raw: String): String? {
+        val text = raw.trim().replace(" ", "")
+
+        if (text.isEmpty()) return null
+
+        // 8:30 -> 08:30, 15:30 -> 15:30
+        if (":" in text) {
+            val parts = text.split(":")
+            if (parts.size != 2) return null
+
+            val hour = parts[0].toIntOrNull() ?: return null
+            val minute = parts[1].toIntOrNull() ?: return null
+
+            if (hour !in 0..23 || minute !in 0..59) return null
+
+            return "%02d:%02d".format(hour, minute)
+        }
+
+        if (!text.all { it.isDigit() }) return null
+
+        return when (text.length) {
+            // 8 -> 08:00
+            1 -> {
+                val hour = text.toIntOrNull() ?: return null
+                if (hour !in 0..9) return null
+                "%02d:00".format(hour)
+            }
+
+            // 15 -> 15:00
+            2 -> {
+                val hour = text.toIntOrNull() ?: return null
+                if (hour !in 0..23) return null
+                "%02d:00".format(hour)
+            }
+
+            // 120 -> 01:20, 930 -> 09:30
+            3 -> {
+                val hour = text.substring(0, 1).toIntOrNull() ?: return null
+                val minute = text.substring(1, 3).toIntOrNull() ?: return null
+                if (hour !in 0..9 || minute !in 0..59) return null
+                "%02d:%02d".format(hour, minute)
+            }
+
+            // 1430 -> 14:30
+            4 -> {
+                val hour = text.substring(0, 2).toIntOrNull() ?: return null
+                val minute = text.substring(2, 4).toIntOrNull() ?: return null
+                if (hour !in 0..23 || minute !in 0..59) return null
+                "%02d:%02d".format(hour, minute)
+            }
+
+            else -> null
+        }
+    }
+
     private fun showConvertDialog(item: ClockItem) {
         val dialogView = LayoutInflater.from(this)
             .inflate(R.layout.dialog_convert_time, null)
@@ -292,7 +423,7 @@ class MainActivity : AppCompatActivity() {
         val homeDayInfoText = dialogView.findViewById<TextView>(R.id.homeDayInfoText)
         val targetDayInfoText = dialogView.findViewById<TextView>(R.id.targetDayInfoText)
 
-        homeLabelText.text = "Tbilisi time"
+        homeLabelText.text = "Home time"
         targetLabelText.text = "${item.name} time"
 
         var isProgrammaticUpdate = false
@@ -305,17 +436,21 @@ class MainActivity : AppCompatActivity() {
             if (text.isBlank()) return
 
             try {
-                val homeTime = LocalTime.parse(text, timeInputFormatter)
+                val normalized = normalizeTimeInput(text) ?: return
+                val homeTime = LocalTime.parse(normalized, timeOutputFormatter)
                 val homeDate = LocalDate.now(homeZone)
                 val homeDateTime = ZonedDateTime.of(homeDate, homeTime, homeZone)
                 val targetDateTime = homeDateTime.withZoneSameInstant(targetZone)
 
                 isProgrammaticUpdate = true
+
                 targetTimeInput.setText(targetDateTime.format(timeOutputFormatter))
                 homeDayInfoText.text = "Today"
                 targetDayInfoText.text = describeRelativeDay(homeDate, targetDateTime.toLocalDate())
+
                 isProgrammaticUpdate = false
             } catch (_: Exception) {
+                isProgrammaticUpdate = false
             }
         }
 
@@ -324,17 +459,21 @@ class MainActivity : AppCompatActivity() {
             if (text.isBlank()) return
 
             try {
-                val targetTime = LocalTime.parse(text, timeInputFormatter)
+                val normalized = normalizeTimeInput(text) ?: return
+                val targetTime = LocalTime.parse(normalized, timeOutputFormatter)
                 val targetDate = LocalDate.now(targetZone)
                 val targetDateTime = ZonedDateTime.of(targetDate, targetTime, targetZone)
                 val homeDateTime = targetDateTime.withZoneSameInstant(homeZone)
 
                 isProgrammaticUpdate = true
+
                 homeTimeInput.setText(homeDateTime.format(timeOutputFormatter))
                 targetDayInfoText.text = "Today"
                 homeDayInfoText.text = describeRelativeDay(targetDate, homeDateTime.toLocalDate())
+
                 isProgrammaticUpdate = false
             } catch (_: Exception) {
+                isProgrammaticUpdate = false
             }
         }
 
@@ -353,6 +492,28 @@ class MainActivity : AppCompatActivity() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
+
+        homeTimeInput.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) {
+                val normalized = normalizeTimeInput(homeTimeInput.text.toString())
+                if (normalized != null) {
+                    homeTimeInput.setText(normalized)
+                    homeTimeInput.setSelection(normalized.length)
+                    convertHomeToTarget(normalized)
+                }
+            }
+        }
+
+        targetTimeInput.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) {
+                val normalized = normalizeTimeInput(targetTimeInput.text.toString())
+                if (normalized != null) {
+                    targetTimeInput.setText(normalized)
+                    targetTimeInput.setSelection(normalized.length)
+                    convertTargetToHome(normalized)
+                }
+            }
+        }
 
         val nowHome = ZonedDateTime.now(homeZone)
         val nowHomeText = nowHome.format(timeOutputFormatter)
